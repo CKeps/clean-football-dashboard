@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import requests
 import json
+from datetime import datetime
 
 st.set_page_config(
     page_title="Pro Football Trading & Kelly Engine",
@@ -40,7 +41,7 @@ def fetch_betfair_fixtures():
                 "marketTypeCodes": ["MATCH_ODDS"],
                 "inPlayOnly": False
             },
-            "maxResults": "50",
+            "maxResults": "200",
             "marketProjection": ["RUNNER_METADATA", "EVENT", "COMPETITION", "MARKET_START_TIME"]
         },
         "id": 1
@@ -57,14 +58,56 @@ def fetch_betfair_fixtures():
 
 raw_markets = fetch_betfair_fixtures()
 
+# Comprehensive list of preferred competitions (including Europa Conference League)
+PREFERRED_LEAGUES = [
+    # Top European & International
+    "Premier League",
+    "La Liga",
+    "Serie A",
+    "Bundesliga",
+    "Ligue 1",
+    "UEFA Champions League",
+    "UEFA Europa League",
+    "UEFA Europa Conference League",
+    # English Leagues & Tiers
+    "Championship",
+    "League One",
+    "League Two",
+    "National League",
+    "National League North",
+    "National League South",
+    # English Cups
+    "FA Cup",
+    "EFL Cup",
+    "EFL Trophy",
+    # Global / Other Requested Leagues
+    "MLS",
+    "Saudi Professional League"
+]
+
 parsed_fixtures = []
 for m in raw_markets:
     event = m.get("event", {})
     competition = m.get("competition", {})
     event_name = event.get("name", "Unknown vs Unknown")
-    start_time = m.get("marketStartTime", "Today")
-    date_str = start_time.split("T")[0] if "T" in start_time else "Live / Upcoming"
+    start_time = m.get("marketStartTime", "")
     league_name = competition.get("name", "Football / Soccer")
+    
+    # Filter by preferred competitions
+    if PREFERRED_LEAGUES:
+        matched = any(l.lower() in league_name.lower() for l in PREFERRED_LEAGUES)
+        if not matched:
+            continue
+
+    # Format the date nicely
+    if start_time:
+        try:
+            dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            date_str = dt.strftime("%A, %d %b %Y")
+        except Exception:
+            date_str = start_time.split("T")[0]
+    else:
+        date_str = "Live / Upcoming"
     
     if " vs " in event_name:
         home, away = event_name.split(" vs ", 1)
@@ -100,7 +143,7 @@ if parsed_fixtures:
 else:
     api_connected = False
     fixtures_df = pd.DataFrame({
-        "Date": ["Today", "Today", "Tomorrow"],
+        "Date": ["Monday, 12 Oct 2026", "Monday, 12 Oct 2026", "Tuesday, 13 Oct 2026"],
         "League": ["Premier League", "Premier League", "La Liga"],
         "Fixture": ["Arsenal vs Chelsea", "Liverpool vs Manchester City", "Real Madrid vs Barcelona"],
         "HomeTeam": ["Arsenal", "Liverpool", "Real Madrid"],
@@ -112,7 +155,7 @@ else:
 st.title("⚽ Professional Goals & Match Odds Trading Engine")
 
 if api_connected:
-    st.success("🟢 Connected to Betfair Exchange API & Live Fixtures")
+    st.success("🟢 Connected to Betfair Exchange API & Filtered Live Fixtures")
 else:
     st.info("ℹ️ Running on Robust Match Engine (Live feed connecting via API credentials)")
 
