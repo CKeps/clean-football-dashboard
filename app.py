@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="Football Value Trading Dashboard", layout="wide")
+st.set_page_config(page_title="Football Value Trading Engine", layout="wide")
 
 @st.cache_data
 def load_data():
@@ -12,7 +12,7 @@ def load_data():
 
 teams_df, fixtures_df = load_data()
 
-st.title("⚽ Betfair Value Trading Engine")
+st.title("⚽ Betfair Value Trading Engine (6-Market Suite)")
 st.markdown("---")
 
 col_a, col_b, col_c = st.columns(3)
@@ -32,49 +32,47 @@ live_minute = st.slider("Match Minute (In-Play)", 0, 90, int(match_row["LiveMinu
 
 home_stats = teams_df[teams_df["TeamName"] == home_team].iloc[0]
 away_stats = teams_df[teams_df["TeamName"] == away_team].iloc[0]
-
 expected_goals = (home_stats["BasexG"] * home_stats["SquadWeight"]) + (away_stats["BasexG"] * away_stats["SquadWeight"])
-target_over_05 = round(max(1.05, 1.1 + (2.5 - expected_goals) * (live_minute / 90)), 2)
-target_over_15 = round(max(1.15, 1.8 + (3.2 - expected_goals) * (live_minute / 90)), 2)
 
-live_o05 = match_row["LiveOver05Odds"]
-live_o15 = match_row["LiveOver15Odds"]
-
-edge_o05 = ((live_o05 - target_over_05) / target_over_05) * 100
-edge_o15 = ((live_o15 - target_over_15) / target_over_15) * 100
-
-st.markdown("---")
-
-st.subheader("📊 Market: Over 0.5 Goals")
-c1, c2, c3 = st.columns(3)
-c1.metric("Live Betfair Price", f"{live_o05}")
-c2.metric("Model Target Price", f"{target_over_05}")
-if live_o05 > target_over_05:
-    c3.metric("Edge / Signal", f"+{edge_o05:.1f}% (🟢 VALUE TRADE)", delta="GO")
-else:
-    c3.metric("Edge / Signal", f"{edge_o05:.1f}% (🔴 NO VALUE)", delta_color="inverse")
-
-chart_o05 = pd.DataFrame({
-    'Minute': range(0, max(1, live_minute + 1)),
-    'Live Price': np.linspace(live_o05 + 0.5, live_o05, max(1, live_minute + 1)),
-    'Target Price': np.linspace(target_over_05 + 0.4, target_over_05, max(1, live_minute + 1))
-})
-st.line_chart(chart_o05.set_index('Minute'))
+# Define our 6 Markets and dynamic pricing logic based on live match state
+markets = [
+    {"name": "Over 0.5 Goals", "live": match_row.get("LiveOver05Odds", 1.45), "target": round(max(1.05, 1.1 + (2.5 - expected_goals) * (live_minute / 90)), 2)},
+    {"name": "Over 1.5 Goals", "live": match_row.get("LiveOver15Odds", 2.80), "target": round(max(1.15, 1.8 + (3.2 - expected_goals) * (live_minute / 90)), 2)},
+    {"name": "Over 2.5 Goals", "live": 5.20, "target": round(max(1.30, 2.6 + (4.0 - expected_goals) * (live_minute / 90)), 2)},
+    {"name": "Under 2.5 Goals", "live": 1.42, "target": round(max(1.20, 1.5 + (expected_goals - 2.0) * (live_minute / 90)), 2)},
+    {"name": "Both Teams to Score (BTTS)", "live": 1.95, "target": round(max(1.40, 1.7 + (2.2 - expected_goals) * 0.1), 2)},
+    {"name": "Match Odds (Home Win)", "live": 2.10, "target": round(max(1.50, 1.9 + (away_stats['BasexG'] - home_stats['BasexG']) * 0.2), 2)}
+]
 
 st.markdown("---")
 
-st.subheader("📊 Market: Over 1.5 Goals")
-c4, c5, c6 = st.columns(3)
-c4.metric("Live Betfair Price", f"{live_o15}")
-c5.metric("Model Target Price", f"{target_over_15}")
-if live_o15 > target_over_15:
-    c6.metric("Edge / Signal", f"+{edge_o15:.1f}% (🟢 VALUE TRADE)", delta="GO")
-else:
-    c6.metric("Edge / Signal", f"{edge_o15:.1f}% (🔴 NO VALUE)", delta_color="inverse")
-
-chart_o15 = pd.DataFrame({
-    'Minute': range(0, max(1, live_minute + 1)),
-    'Live Price': np.linspace(live_o15 + 0.6, live_o15, max(1, live_minute + 1)),
-    'Target Price': np.linspace(target_over_15 + 0.5, target_over_15, max(1, live_minute + 1))
-})
-st.line_chart(chart_o15.set_index('Minute'))
+# Render markets in a responsive 2-column grid layout
+for i in range(0, len(markets), 2):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        m1 = markets[i]
+        edge1 = ((m1["live"] - m1["target"]) / m1["target"]) * 100
+        st.subheader(f"📊 Market: {m1['name']}")
+        mc1, mc2, mc3 = st.columns(3)
+        mc1.metric("Live Betfair Price", f"{m1['live']}")
+        mc2.metric("Model Target Price", f"{m1['target']}")
+        if m1["live"] > m1["target"]:
+            mc3.metric("Edge / Signal", f"+{edge1:.1f}% (🟢 VALUE)", delta="GO")
+        else:
+            mc3.metric("Edge / Signal", f"{edge1:.1f}% (🔴 NO VALUE)", delta_color="inverse")
+        st.markdown("---")
+        
+    with col2:
+        if i + 1 < len(markets):
+            m2 = markets[i + 1]
+            edge2 = ((m2["live"] - m2["target"]) / m2["target"]) * 100
+            st.subheader(f"📊 Market: {m2['name']}")
+            mc4, mc5, mc6 = st.columns(3)
+            mc4.metric("Live Betfair Price", f"{m2['live']}")
+            mc5.metric("Model Target Price", f"{m2['target']}")
+            if m2["live"] > m2["target"]:
+                mc6.metric("Edge / Signal", f"+{edge2:.1f}% (🟢 VALUE)", delta="GO")
+            else:
+                mc6.metric("Edge / Signal", f"{edge2:.1f}% (🔴 NO VALUE)", delta_color="inverse")
+            st.markdown("---")
