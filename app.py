@@ -6,18 +6,18 @@ import json
 
 st.set_page_config(page_title="Football Value Trading Engine", layout="wide")
 
-# Sidebar for Bankroll and Kelly Fraction settings
 st.sidebar.header("💰 Bankroll & Risk Management")
 bankroll = st.sidebar.number_input("Total Bankroll (£)", min_value=10.0, max_value=100000.0, value=1000.0, step=50.0)
 kelly_fraction = st.sidebar.slider("Kelly Multiplier (Safety)", 0.1, 1.0, 0.25, 0.05, help="0.25 = Quarter Kelly for lower variance")
 
-@st.cache_data(ttl=60)
-def fetch_betfair_odds():
+# 1. Fetch Live Football Markets & Fixtures Directly from Betfair API
+@st.cache_data(ttl=30)
+def fetch_betfair_fixtures():
     try:
         app_key = st.secrets["BETFAIR_APP_KEY"]
         sso_id = st.secrets["BETFAIR_SSO_ID"]
     except Exception:
-        return None  
+        return []
 
     url = "https://api.betfair.com/exchange/betting/rest/v1.0/listMarketCatalogue/"
     headers = {
@@ -25,53 +25,88 @@ def fetch_betfair_odds():
         "X-Authentication": sso_id,
         "Content-Type": "application/json"
     }
+    
+    # Query Soccer (Event Type 1) for Match Odds
     payload = {
         "filter": {
             "eventTypeIds": ["1"],
-            "marketTypeCodes": ["MATCH_ODDS", "OVER_UNDER_25"],
+            "marketTypeCodes": ["MATCH_ODDS"],
             "inPlayOnly": False
         },
-        "maxResults": "5",
-        "marketProjection": ["RUNNER_METADATA", "EVENT"]
+        "maxResults": "50",
+        "marketProjection": ["RUNNER_METADATA", "EVENT", "COMPETITION", "MARKET_START_TIME"]
     }
+    
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload))
         if response.status_code == 200:
             return response.json()
     except Exception:
         pass
-    return None
+    return []
 
-api_data = fetch_betfair_odds()
+raw_markets = fetch_betfair_fixtures()
+
+# Parse Betfair JSON response into a structured fixtures list
+parsed_fixtures = []
+for m in raw_markets:
+    event = m.get("event", {})
+    competition = m.get("competition", {})
+    market_name = m.get("marketName", "")
+    event_name = event.get("name", "Unknown vs Unknown")
+    start_time = m.get("marketStartTime", "Today")
+    
+    # Clean up start time format
+    date_str = start_time.split("T")[0] if "T" in start_time else "Live / Upcoming"
+    league_name = competition.get("name", "Football / Soccer")
+    
+    if " vs " in event_name:
+        home, away = event_name.split(" vs ", 1)
+    else:
+        home, away = event_name, "Away"
+        
+    parsed_fixtures.append({
+        "Date": date_str,
+        "League": league_name,
+        "Fixture": event_name,
+        "HomeTeam": home,
+        "AwayTeam": away,
+        "MarketId": m.get("marketId"),
+        "LiveMinute": 0  # Default to pre-match/kickoff if live clock isn't parsed yet
+    })
 
 @st.cache_data
-def load_data():
+def load_fallback_data():
     teams_df = pd.read_csv("data/team_db.csv")
-    try:
-        fixtures_df = pd.read_csv("data/fixture_db.csv")
-    except Exception:
-        # Fallback inline fixture structure if file is missing
-        fixtures_df = pd.DataFrame({
-            "Date": ["Today (12 Oct)"],
-            "League": ["Premier League"],
-            "Fixture": ["Arsenal vs Chelsea"],
-            "HomeTeam": ["Arsenal"],
-            "AwayTeam": ["Chelsea"],
-            "LiveMinute": [32]
-        })
-    return teams_df, fixtures_df
+    return teams_df
 
-teams_df, fixtures_df = load_data()
+teams_df = load_fallback_data()
 
-st.title("⚽ Professional Goals & Match Odds Trading Engine")
-
-if api_data is not None and isinstance(api_data, list):
-    st.success("🟢 Connected to Betfair Exchange Live API!")
+# Use Betfair fixtures if available, otherwise fallback gracefully
+if parsed_fixtures:
+    fixtures_df = pd.DataFrame(parsed_fixtures)
+    api_connected = True
 else:
-    st.info("ℹ️ Betfair API initialized (Ensure SSO ID session token is active if pulling fresh live feeds).")
+    api_connected = False
+    fixtures_df = pd.DataFrame({
+        "Date": ["Today"],
+        "League": ["Premier League (Fallback)"],
+        "Fixture": ["Arsenal vs Chelsea"],
+        "HomeTeam": ["Arsenal"],
+        "AwayTeam": ["Chelsea"],
+        "LiveMinute": [32]
+    })
+
+st.title("⚽ Professional Goals & Match Odds Trading Engine (Live Betfair API)")
+
+if api_connected:
+    st.success("🟢 Connected to Betfair Exchange Live API & Live Fixture Feed!")
+else:
+    st.warning("⚠️ Betfair API live fixtures unavailable. Showing fallback defaults.")
 
 st.markdown("---")
 
+# Dynamic Dropdowns populated by real Betfair data
 col_a, col_b, col_c = st.columns(3)
 with col_a:
     selected_date = st.selectbox("Date", fixtures_df["Date"].unique())
@@ -87,9 +122,20 @@ home_team = match_row["HomeTeam"]
 away_team = match_row["AwayTeam"]
 live_minute = st.slider("Match Minute (In-Play)", 0, 90, int(match_row["LiveMinute"]))
 
-home_stats = teams_df[teams_df["TeamName"] == home_team].iloc[0]
-away_stats = teams_df[teams_df["TeamName"] == away_team].iloc[0]
-expected_goals = (home_stats["BasexG"] * home_stats["SquadWeight"]) + (away_stats["BasexG"] * away_stats["SquadWeight"])
+# Pull team stats or use defaults if team is newly added from Betfair
+if home_team in teams_df["TeamName"].values:
+    home_stats = teams_df[teams_df["TeamName"] == home_team].iloc[0]
+    home_xg = home_stats["BasexG"] * home_stats["SquadWeight"]
+else:
+    home_xg = 1.35  # League average baseline
+
+if away_team in teams_df["TeamName"].values:
+    away_stats = teams_df[teams_df["TeamName"] == away_team].iloc[0]
+    away_xg = away_stats["BasexG"] * away_stats["SquadWeight"]
+else:
+    away_xg = 1.15  # League average baseline
+
+expected_goals = home_xg + away_xg
 
 markets = []
 
@@ -120,11 +166,7 @@ for i in range(0, len(markets), 2):
             live_p = m["live"]
             target_p = m["target"]
             
-            # Implied model probability vs Market probability
             model_prob = 1.0 / target_p
-            market_prob = 1.0 / live_p
-            
-            # Kelly Criterion Calculation: f* = (bp - q) / b  where b = odds - 1
             b = live_p - 1.0
             if b > 0:
                 full_kelly = (model_prob * live_p - 1.0) / b
