@@ -6,7 +6,11 @@ import json
 
 st.set_page_config(page_title="Football Value Trading Engine", layout="wide")
 
-# 1. Authenticate & Fetch Live Odds from Betfair API
+# Sidebar for Bankroll and Kelly Fraction settings
+st.sidebar.header("💰 Bankroll & Risk Management")
+bankroll = st.sidebar.number_input("Total Bankroll (£)", min_value=10.0, max_value=100000.0, value=1000.0, step=50.0)
+kelly_fraction = st.sidebar.slider("Kelly Multiplier (Safety)", 0.1, 1.0, 0.25, 0.05, help="0.25 = Quarter Kelly for lower variance")
+
 @st.cache_data(ttl=60)
 def fetch_betfair_odds():
     try:
@@ -21,7 +25,6 @@ def fetch_betfair_odds():
         "X-Authentication": sso_id,
         "Content-Type": "application/json"
     }
-    
     payload = {
         "filter": {
             "eventTypeIds": ["1"],
@@ -31,7 +34,6 @@ def fetch_betfair_odds():
         "maxResults": "5",
         "marketProjection": ["RUNNER_METADATA", "EVENT"]
     }
-    
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload))
         if response.status_code == 200:
@@ -52,11 +54,9 @@ teams_df, fixtures_df = load_data()
 
 st.title("⚽ Professional Goals & Match Odds Trading Engine")
 
-# Robust connection verification check
 if api_data is not None and isinstance(api_data, list):
     st.success("🟢 Connected to Betfair Exchange Live API!")
 else:
-    # Fallback status message check for session token validity
     st.info("ℹ️ Betfair API initialized (Ensure SSO ID session token is active if pulling fresh live feeds).")
 
 st.markdown("---")
@@ -97,7 +97,7 @@ markets.append({"name": "Match Odds: Draw", "live": 3.40, "target": 3.20})
 markets.append({"name": "Match Odds: Away Win", "live": 3.60, "target": 3.10})
 
 st.markdown("---")
-st.subheader("📈 Goal Lines & Match Odds Value Board")
+st.subheader("📈 Goal Lines & Match Odds Value Board (with Kelly Staking)")
 
 for i in range(0, len(markets), 2):
     col1, col2 = st.columns(2)
@@ -106,18 +106,38 @@ for i in range(0, len(markets), 2):
         if m is None:
             continue
         with col:
-            edge = ((m["live"] - m["target"]) / m["target"]) * 100
+            live_p = m["live"]
+            target_p = m["target"]
             
-            if m["live"] > m["target"] * 1.05:
+            # Implied model probability vs Market probability
+            model_prob = 1.0 / target_p
+            market_prob = 1.0 / live_p
+            
+            # Kelly Criterion Calculation: f* = (bp - q) / b  where b = odds - 1
+            b = live_p - 1.0
+            if b > 0:
+                full_kelly = (model_prob * live_p - 1.0) / b
+            else:
+                full_kelly = 0.0
+                
+            recommended_stake = max(0.0, bankroll * full_kelly * kelly_fraction)
+            
+            if live_p > target_p * 1.05 and recommended_stake > 0:
                 signal = "🟢 BACK VALUE"
-            elif m["live"] < m["target"] * 0.95:
+            elif live_p < target_p * 0.95:
                 signal = "🔵 LAY VALUE"
             else:
                 signal = "⚪ FAIR / NO TRADE"
+                recommended_stake = 0.0
 
             st.markdown(f"**{m['name']}**")
             mc1, mc2, mc3 = st.columns(3)
-            mc1.metric("Live Price", f"{m['live']}")
-            mc2.metric("Model Target", f"{m['target']}")
+            mc1.metric("Live Price", f"{live_p}")
+            mc2.metric("Model Target", f"{target_p}")
             mc3.metric("Signal", signal)
+            
+            if recommended_stake > 0:
+                st.caption(f"💡 **Rec. Stake:** £{recommended_stake:.2f} ({int(kelly_fraction*100)}% Kelly)")
+            else:
+                st.caption("💡 **Rec. Stake:** £0.00 (No Value)")
             st.markdown("---")
