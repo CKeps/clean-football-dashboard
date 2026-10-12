@@ -44,25 +44,14 @@ def fetch_betfair_fixtures():
         "id": 1
     }
     
-    # Query Soccer (Event Type 1) for Match Odds
-    payload = {
-        "filter": {
-            "eventTypeIds": ["1"],
-            "marketTypeCodes": ["MATCH_ODDS"],
-            "inPlayOnly": False
-        },
-        "maxResults": "50",
-        "marketProjection": ["RUNNER_METADATA", "EVENT", "COMPETITION", "MARKET_START_TIME"]
-    }
-    
- try:
+    try:
         response = requests.post(url, headers=headers, data=json.dumps(payload))
         if response.status_code == 200:
             res_json = response.json()
             return res_json.get("result", [])
     except Exception:
         pass
-    return []   
+    return []
 
 raw_markets = fetch_betfair_fixtures()
 
@@ -75,7 +64,6 @@ for m in raw_markets:
     event_name = event.get("name", "Unknown vs Unknown")
     start_time = m.get("marketStartTime", "Today")
     
-    # Clean up start time format
     date_str = start_time.split("T")[0] if "T" in start_time else "Live / Upcoming"
     league_name = competition.get("name", "Football / Soccer")
     
@@ -91,7 +79,7 @@ for m in raw_markets:
         "HomeTeam": home,
         "AwayTeam": away,
         "MarketId": m.get("marketId"),
-        "LiveMinute": 0  # Default to pre-match/kickoff if live clock isn't parsed yet
+        "LiveMinute": 0
     })
 
 @st.cache_data
@@ -101,7 +89,6 @@ def load_fallback_data():
 
 teams_df = load_fallback_data()
 
-# Use Betfair fixtures if available, otherwise fallback gracefully
 if parsed_fixtures:
     fixtures_df = pd.DataFrame(parsed_fixtures)
     api_connected = True
@@ -125,7 +112,6 @@ else:
 
 st.markdown("---")
 
-# Dynamic Dropdowns populated by real Betfair data
 col_a, col_b, col_c = st.columns(3)
 with col_a:
     selected_date = st.selectbox("Date", fixtures_df["Date"].unique())
@@ -141,18 +127,17 @@ home_team = match_row["HomeTeam"]
 away_team = match_row["AwayTeam"]
 live_minute = st.slider("Match Minute (In-Play)", 0, 90, int(match_row["LiveMinute"]))
 
-# Pull team stats or use defaults if team is newly added from Betfair
 if home_team in teams_df["TeamName"].values:
     home_stats = teams_df[teams_df["TeamName"] == home_team].iloc[0]
     home_xg = home_stats["BasexG"] * home_stats["SquadWeight"]
 else:
-    home_xg = 1.35  # League average baseline
+    home_xg = 1.35
 
 if away_team in teams_df["TeamName"].values:
     away_stats = teams_df[teams_df["TeamName"] == away_team].iloc[0]
     away_xg = away_stats["BasexG"] * away_stats["SquadWeight"]
 else:
-    away_xg = 1.15  # League average baseline
+    away_xg = 1.15
 
 expected_goals = home_xg + away_xg
 
