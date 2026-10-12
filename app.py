@@ -16,14 +16,14 @@ st.sidebar.header("💰 Bankroll & Risk Management")
 bankroll = st.sidebar.number_input("Total Bankroll (£)", min_value=10.0, max_value=100000.0, value=1000.0, step=50.0)
 kelly_fraction = st.sidebar.slider("Kelly Multiplier (Safety)", 0.1, 1.0, 0.25, 0.05, help="0.25 = Quarter Kelly for optimal variance reduction")
 
-# --- DATA INGESTION: LIVE BETFAIR API OR SMART SIMULATED FEED ---
+# --- DATA INGESTION: LIVE BETFAIR API DIRECT STREAM ---
 @st.cache_data(ttl=15)
-def fetch_betfair_data():
+def fetch_betfair_exchange_data():
     try:
         app_key = st.secrets["BETFAIR_APP_KEY"]
         sso_id = st.secrets["BETFAIR_SSO_ID"]
     except Exception:
-        return [], {}, False
+        return [], {}
 
     url = "https://api.betfair.com/exchange/betting/json-rpc/v1"
     headers = {
@@ -32,16 +32,16 @@ def fetch_betfair_data():
         "Content-Type": "application/json"
     }
     
+    # Query all available soccer match odds catalogues from the exchange
     cat_payload = {
         "jsonrpc": "2.0",
         "method": "SportsAPING/v1.0/listMarketCatalogue",
         "params": {
             "filter": {
                 "eventTypeIds": ["1"],
-                "marketTypeCodes": ["MATCH_ODDS"],
-                "inPlayOnly": False
+                "marketTypeCodes": ["MATCH_ODDS"]
             },
-            "maxResults": "50",
+            "maxResults": "100",
             "marketProjection": ["RUNNER_METADATA", "EVENT", "COMPETITION", "MARKET_START_TIME"]
         },
         "id": 1
@@ -50,15 +50,17 @@ def fetch_betfair_data():
     try:
         res = requests.post(url, headers=headers, data=json.dumps(cat_payload))
         if res.status_code != 200:
-            return [], {}, False
+            return [], {}
         catalogue_result = res.json().get("result", [])
     except Exception:
-        return [], {}, False
+        return [], {}
 
     if not catalogue_result:
-        return [], {}, False
+        return [], {}
 
     market_ids = [m.get("marketId") for m in catalogue_result if m.get("marketId")]
+    
+    # Grab the live book prices for those exact market IDs
     book_payload = {
         "jsonrpc": "2.0",
         "method": "SportsAPING/v1.0/listMarketBook",
@@ -81,79 +83,57 @@ def fetch_betfair_data():
     except Exception:
         pass
 
-    return catalogue_result, books_map, True
+    return catalogue_result, books_map
 
-raw_cats, market_books, api_success = fetch_betfair_data()
-
-PREFERRED_LEAGUES = [
-    "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
-    "UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League",
-    "Championship", "League One", "League Two", "National League",
-    "National League North", "National League South", "FA Cup", "EFL Cup",
-    "EFL Trophy", "MLS", "Saudi Professional League"
-]
+raw_cats, market_books = fetch_betfair_exchange_data()
 
 parsed_fixtures = []
-if api_success and raw_cats:
-    for m in raw_cats:
-        event = m.get("event", {})
-        competition = m.get("competition", {})
-        event_name = event.get("name", "Unknown vs Unknown")
-        start_time = m.get("marketStartTime", "")
-        league_name = competition.get("name", "Football / Soccer")
-        market_id = m.get("marketId")
+for m in raw_cats:
+    event = m.get("event", {})
+    competition = m.get("competition", {})
+    event_name = event.get("name", "Unknown vs Unknown")
+    start_time = m.get("marketStartTime", "")
+    league_name = competition.get("name", "Football / Soccer")
+    market_id = m.get("marketId")
+    
+    if start_time:
+        try:
+            dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            date_str = dt.strftime("%A, %d %b %Y")
+        except Exception:
+            date_str = start_time.split("T")[0]
+    else:
+        date_str = "Live / Upcoming"
+    
+    if " vs " in event_name:
+        home, away = event_name.split(" vs ", 1)
+    else:
+        home, away = event_name, "Away"
         
-        if start_time:
-            try:
-                dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                date_str = dt.strftime("%A, %d %b %Y")
-            except Exception:
-                date_str = start_time.split("T")[0]
-        else:
-            date_str = "Live / Upcoming"
-        
-        if " vs " in event_name:
-            home, away = event_name.split(" vs ", 1)
-        else:
-            home, away = event_name, "Away"
-            
-        book_data = market_books.get(market_id, {})
-        runners = book_data.get("runners", [])
-        
-        home_back_price, draw_back_price, away_back_price = 1.95, 3.50, 4.00
-        if len(runners) >= 3:
-            try:
-                home_back_price = runners[0].get("ex", {}).get("availableToBack", [{"price": 1.95}])[0].get("price", 1.95)
-                draw_back_price = runners[2].get("ex", {}).get("availableToBack", [{"price": 3.50}])[0].get("price", 3.50)
-                away_back_price = runners[1].get("ex", {}).get("availableToBack", [{"price": 4.00}])[0].get("price", 4.00)
-            except Exception:
-                pass
+    book_data = market_books.get(market_id, {})
+    runners = book_data.get("runners", [])
+    
+    home_back_price, draw_back_price, away_back_price = 1.95, 3.50, 4.00
+    if len(runners) >= 3:
+        try:
+            home_back_price = runners[0].get("ex", {}).get("availableToBack", [{"price": 1.95}])[0].get("price", 1.95)
+            draw_back_price = runners[2].get("ex", {}).get("availableToBack", [{"price": 3.50}])[0].get("price", 3.50)
+            away_back_price = runners[1].get("ex", {}).get("availableToBack", [{"price": 4.00}])[0].get("price", 4.00)
+        except Exception:
+            pass
 
-        parsed_fixtures.append({
-            "Date": date_str,
-            "League": league_name,
-            "Fixture": event_name,
-            "HomeTeam": home,
-            "AwayTeam": away,
-            "MarketId": market_id,
-            "HomePrice": home_back_price,
-            "DrawPrice": draw_back_price,
-            "AwayPrice": away_back_price,
-            "InPlay": book_data.get("inplay", False)
-        })
-
-# If Betfair delayed feed is currently empty, provide live simulated test data across preferred leagues
-if not parsed_fixtures:
-    parsed_fixtures = [
-        {"Date": "Monday, 12 Oct 2026", "League": "Premier League", "Fixture": "Arsenal vs Chelsea", "HomeTeam": "Arsenal", "AwayTeam": "Chelsea", "MarketId": "sim_1", "HomePrice": 1.95, "DrawPrice": 3.50, "AwayPrice": 4.00, "InPlay": True},
-        {"Date": "Monday, 12 Oct 2026", "League": "Premier League", "Fixture": "Liverpool vs Manchester City", "HomeTeam": "Liverpool", "AwayTeam": "Manchester City", "MarketId": "sim_2", "HomePrice": 2.10, "DrawPrice": 3.40, "AwayPrice": 3.30, "InPlay": False},
-        {"Date": "Tuesday, 13 Oct 2026", "League": "La Liga", "Fixture": "Real Madrid vs Barcelona", "HomeTeam": "Real Madrid", "AwayTeam": "Barcelona", "MarketId": "sim_3", "HomePrice": 1.85, "DrawPrice": 3.60, "AwayPrice": 4.10, "InPlay": False},
-        {"Date": "Tuesday, 13 Oct 2026", "League": "UEFA Champions League", "Fixture": "Bayern Munich vs PSG", "HomeTeam": "Bayern Munich", "AwayTeam": "PSG", "MarketId": "sim_4", "HomePrice": 2.05, "DrawPrice": 3.50, "AwayPrice": 3.60, "InPlay": False}
-    ]
-
-filtered_fixtures = [f for f in parsed_fixtures if any(l.lower() in f["League"].lower() for l in PREFERRED_LEAGUES)]
-if not filtered_fixtures:
-    filtered_fixtures = parsed_fixtures
+    parsed_fixtures.append({
+        "Date": date_str,
+        "League": league_name,
+        "Fixture": event_name,
+        "HomeTeam": home,
+        "AwayTeam": away,
+        "MarketId": market_id,
+        "HomePrice": home_back_price,
+        "DrawPrice": draw_back_price,
+        "AwayPrice": away_back_price,
+        "InPlay": book_data.get("inplay", False)
+    })
 
 @st.cache_data
 def load_team_database():
@@ -167,15 +147,32 @@ def load_team_database():
         })
 
 teams_df = load_team_database()
-fixtures_df = pd.DataFrame(filtered_fixtures)
+
+if parsed_fixtures:
+    fixtures_df = pd.DataFrame(parsed_fixtures)
+    api_connected = True
+else:
+    fixtures_df = pd.DataFrame({
+        "Date": ["No Feed Data"],
+        "League": ["None"],
+        "Fixture": ["No Live Exchange Markets Found"],
+        "HomeTeam": ["Home"],
+        "AwayTeam": ["Away"],
+        "MarketId": ["0"],
+        "HomePrice": [1.0],
+        "DrawPrice": [1.0],
+        "AwayPrice": [1.0],
+        "InPlay": [False]
+    })
+    api_connected = False
 
 # --- MAIN DASHBOARD INTERFACE ---
 st.title("⚽ Professional Goals & Match Odds Trading Engine")
 
-if api_success and raw_cats:
-    st.success(f"🟢 Connected to Betfair Exchange API! Live streaming {len(raw_cats)} market catalogues.")
+if api_connected:
+    st.success(f"🟢 Connected to Betfair Exchange API! Live streaming {len(fixtures_df)} market fixtures directly from exchange catalogue.")
 else:
-    st.info("ℹ️ Betfair Delayed API currently has no active exchange fixtures open. Showing live simulated testing matches.")
+    st.warning("⚠️ Betfair API returned 0 markets from the endpoint.")
 
 st.markdown("---")
 
@@ -209,7 +206,6 @@ else:
 
 expected_goals = home_xg + away_xg
 
-# Build Markets & Pricing Model using Match Odds
 markets = []
 for line in [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5]:
     base_over_target = max(1.01, round(1.0 + (line * 0.9) - (expected_goals * 0.4) + (max(0, 45 - live_minute) * 0.01), 2))
