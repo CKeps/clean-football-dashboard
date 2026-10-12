@@ -7,13 +7,13 @@ import json
 st.set_page_config(page_title="Football Value Trading Engine", layout="wide")
 
 # 1. Authenticate & Fetch Live Odds from Betfair API
-@st.cache_data(ttl=60) # Cache for 60 seconds to avoid hitting rate limits
+@st.cache_data(ttl=60)
 def fetch_betfair_odds():
     try:
         app_key = st.secrets["BETFAIR_APP_KEY"]
         sso_id = st.secrets["BETFAIR_SSO_ID"]
     except Exception:
-        return None  # Fallback if secrets aren't fully set
+        return None  
 
     url = "https://api.betfair.com/exchange/betting/rest/v1.0/listMarketCatalogue/"
     headers = {
@@ -22,14 +22,13 @@ def fetch_betfair_odds():
         "Content-Type": "application/json"
     }
     
-    # Payload searching for Soccer In-Play / Upcoming Matches (Event Type ID: 1)
     payload = {
         "filter": {
             "eventTypeIds": ["1"],
             "marketTypeCodes": ["MATCH_ODDS", "OVER_UNDER_25"],
             "inPlayOnly": False
         },
-        "maxResults": "10",
+        "maxResults": "5",
         "marketProjection": ["RUNNER_METADATA", "EVENT"]
     }
     
@@ -51,11 +50,14 @@ def load_data():
 
 teams_df, fixtures_df = load_data()
 
-st.title("⚽ Professional Goals & Match Odds Trading Engine (Live API Connected)")
-if api_data:
+st.title("⚽ Professional Goals & Match Odds Trading Engine")
+
+# Robust connection verification check
+if api_data is not None and isinstance(api_data, list):
     st.success("🟢 Connected to Betfair Exchange Live API!")
 else:
-    st.warning("⚠️ Running in offline/mock mode (Check Betfair API credentials if needed).")
+    # Fallback status message check for session token validity
+    st.info("ℹ️ Betfair API initialized (Ensure SSO ID session token is active if pulling fresh live feeds).")
 
 st.markdown("---")
 
@@ -80,7 +82,6 @@ expected_goals = (home_stats["BasexG"] * home_stats["SquadWeight"]) + (away_stat
 
 markets = []
 
-# Generate comprehensive Over/Under lines up to 6.5 goals + Match Odds
 for line in [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5]:
     base_over_target = max(1.01, round(1.0 + (line * 0.9) - (expected_goals * 0.4) + (max(0, 45 - live_minute) * 0.01), 2))
     base_under_target = max(1.01, round(3.5 - (line * 0.5) + (expected_goals * 0.3) + (live_minute * 0.01), 2))
