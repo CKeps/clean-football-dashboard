@@ -32,7 +32,6 @@ def fetch_betfair_fixtures():
         "Content-Type": "application/json"
     }
     
-    # Expanded filter to capture live and upcoming markets across soccer
     payload = {
         "jsonrpc": "2.0",
         "method": "SportsAPING/v1.0/listMarketCatalogue",
@@ -59,7 +58,6 @@ def fetch_betfair_fixtures():
 
 raw_markets = fetch_betfair_fixtures()
 
-# Comprehensive list of preferred competitions
 PREFERRED_LEAGUES = [
     "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
     "UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League",
@@ -76,14 +74,31 @@ for m in raw_markets:
     start_time = m.get("marketStartTime", "")
     league_name = competition.get("name", "Football / Soccer")
     
-    # If leagues are defined, match them loosely. If empty, take everything.
-    if PREFERRED_LEAGUES:
-        matched = any(l.lower() in league_name.lower() for l in PREFERRED_LEAGUES)
-        if not matched:
-            continue
-    else:
-        matched = True
+    parsed_fixtures.append({
+        "RawLeague": league_name,
+        "Event": event_name,
+        "StartTime": start_time,
+        "MarketId": m.get("marketId")
+    })
 
+# If strict preferred leagues yield nothing on the delayed feed, fallback to show whatever Betfair IS sending
+filtered_parsed = []
+for p in parsed_fixtures:
+    league_name = p["RawLeague"]
+    matched = any(l.lower() in league_name.lower() for l in PREFERRED_LEAGUES)
+    if matched:
+        p["DisplayLeague"] = league_name
+        filtered_parsed.append(p)
+
+# If delayed environment has no matches matching the strict list, grab all available soccer markets so you aren't blocked
+if not filtered_parsed and parsed_fixtures:
+    for p in parsed_fixtures:
+        p["DisplayLeague"] = p["RawLeague"]
+        filtered_parsed.append(p)
+
+final_fixtures_list = []
+for p in filtered_parsed:
+    start_time = p["StartTime"]
     if start_time:
         try:
             dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
@@ -92,19 +107,20 @@ for m in raw_markets:
             date_str = start_time.split("T")[0]
     else:
         date_str = "Live / Upcoming"
-    
+        
+    event_name = p["Event"]
     if " vs " in event_name:
         home, away = event_name.split(" vs ", 1)
     else:
         home, away = event_name, "Away"
         
-    parsed_fixtures.append({
+    final_fixtures_list.append({
         "Date": date_str,
-        "League": league_name,
+        "League": p["DisplayLeague"],
         "Fixture": event_name,
         "HomeTeam": home,
         "AwayTeam": away,
-        "MarketId": m.get("marketId"),
+        "MarketId": p["MarketId"],
         "LiveMinute": 0
     })
 
@@ -121,12 +137,11 @@ def load_team_database():
 
 teams_df = load_team_database()
 
-if parsed_fixtures:
-    fixtures_df = pd.DataFrame(parsed_fixtures)
+if final_fixtures_list:
+    fixtures_df = pd.DataFrame(final_fixtures_list)
     api_connected = True
 else:
     api_connected = False
-    # Fallback to help test the UI if API returns empty
     fixtures_df = pd.DataFrame({
         "Date": ["Monday, 12 Oct 2026", "Monday, 12 Oct 2026", "Tuesday, 13 Oct 2026"],
         "League": ["Premier League", "Premier League", "La Liga"],
@@ -140,9 +155,9 @@ else:
 st.title("⚽ Professional Goals & Match Odds Trading Engine")
 
 if api_connected:
-    st.success(f"🟢 Connected to Betfair Exchange API! Loaded {len(fixtures_df)} live/upcoming fixtures.")
+    st.success(f"🟢 Connected to Betfair Exchange API! Loaded {len(fixtures_df)} active market fixtures.")
 else:
-    st.warning("⚠️ Betfair API returned 0 matching fixtures for your filter. Showing fallback defaults. (Check if your delayed app key has active markets available).")
+    st.warning("⚠️ Betfair API returned 0 markets. Showing fallback defaults.")
 
 st.markdown("---")
 
