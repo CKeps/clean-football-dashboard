@@ -19,11 +19,29 @@ def fetch_betfair_fixtures():
     except Exception:
         return []
 
-    url = "https://api.betfair.com/exchange/betting/rest/v1.0/listMarketCatalogue/"
+    url = "https://api.betfair.com/exchange/betting/json-rpc/v1"
     headers = {
         "X-Application": app_key,
         "X-Authentication": sso_id,
         "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "SportsAPING/v1.0/listMarketCatalogue",
+        "params": {
+            "filter": {
+                "eventTypeIds": ["1"],
+                "marketTypeCodes": ["MATCH_ODDS"],
+                "inPlayOnly": False,
+                "marketStartTime": {
+                    "from": "2026-10-12T00:00:00Z"
+                }
+            },
+            "maxResults": "50",
+            "marketProjection": ["RUNNER_METADATA", "EVENT", "COMPETITION", "MARKET_START_TIME"]
+        },
+        "id": 1
     }
     
     # Query Soccer (Event Type 1) for Match Odds
@@ -37,13 +55,14 @@ def fetch_betfair_fixtures():
         "marketProjection": ["RUNNER_METADATA", "EVENT", "COMPETITION", "MARKET_START_TIME"]
     }
     
-    try:
+ try:
         response = requests.post(url, headers=headers, data=json.dumps(payload))
         if response.status_code == 200:
-            return response.json()
+            res_json = response.json()
+            return res_json.get("result", [])
     except Exception:
         pass
-    return []
+    return []   
 
 raw_markets = fetch_betfair_fixtures()
 
