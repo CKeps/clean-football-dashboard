@@ -38,10 +38,7 @@ def fetch_betfair_fixtures():
             "filter": {
                 "eventTypeIds": ["1"],
                 "marketTypeCodes": ["MATCH_ODDS"],
-                "inPlayOnly": False,
-                "marketStartTime": {
-                    "from": "2026-10-12T00:00:00Z"
-                }
+                "inPlayOnly": False
             },
             "maxResults": "50",
             "marketProjection": ["RUNNER_METADATA", "EVENT", "COMPETITION", "MARKET_START_TIME"]
