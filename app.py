@@ -58,31 +58,12 @@ def fetch_betfair_fixtures():
 
 raw_markets = fetch_betfair_fixtures()
 
-# Comprehensive list of preferred competitions (including Europa Conference League)
 PREFERRED_LEAGUES = [
-    # Top European & International
-    "Premier League",
-    "La Liga",
-    "Serie A",
-    "Bundesliga",
-    "Ligue 1",
-    "UEFA Champions League",
-    "UEFA Europa League",
-    "UEFA Europa Conference League",
-    # English Leagues & Tiers
-    "Championship",
-    "League One",
-    "League Two",
-    "National League",
-    "National League North",
-    "National League South",
-    # English Cups
-    "FA Cup",
-    "EFL Cup",
-    "EFL Trophy",
-    # Global / Other Requested Leagues
-    "MLS",
-    "Saudi Professional League"
+    "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
+    "UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League",
+    "Championship", "League One", "League Two", "National League",
+    "National League North", "National League South", "FA Cup", "EFL Cup",
+    "EFL Trophy", "MLS", "Saudi Professional League"
 ]
 
 parsed_fixtures = []
@@ -93,13 +74,11 @@ for m in raw_markets:
     start_time = m.get("marketStartTime", "")
     league_name = competition.get("name", "Football / Soccer")
     
-    # Filter by preferred competitions
     if PREFERRED_LEAGUES:
         matched = any(l.lower() in league_name.lower() for l in PREFERRED_LEAGUES)
         if not matched:
             continue
 
-    # Format the date nicely
     if start_time:
         try:
             dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
@@ -161,7 +140,6 @@ else:
 
 st.markdown("---")
 
-# Selection Controls
 col_a, col_b, col_c = st.columns(3)
 with col_a:
     selected_date = st.selectbox("Date", fixtures_df["Date"].unique())
@@ -177,7 +155,6 @@ home_team = match_row["HomeTeam"]
 away_team = match_row["AwayTeam"]
 live_minute = st.slider("Match Minute (In-Play)", 0, 90, int(match_row["LiveMinute"]))
 
-# Model Calculation for xG
 if home_team in teams_df["TeamName"].values:
     h_row = teams_df[teams_df["TeamName"] == home_team].iloc[0]
     home_xg = h_row["BasexG"] * h_row["SquadWeight"]
@@ -192,7 +169,6 @@ else:
 
 expected_goals = home_xg + away_xg
 
-# Build Markets & Pricing Model
 markets = []
 for line in [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5]:
     base_over_target = max(1.01, round(1.0 + (line * 0.9) - (expected_goals * 0.4) + (max(0, 45 - live_minute) * 0.01), 2))
@@ -209,7 +185,7 @@ markets.append({"name": "Match Odds: Draw", "live": round(3.40 * np.random.unifo
 markets.append({"name": "Match Odds: Away Win", "live": round(3.10 * np.random.uniform(0.95, 1.20), 2), "target": 3.10})
 
 st.markdown("---")
-st.subheader("📈 Value Board & Kelly Staking Matrix")
+st.subheader("📈 Value Board & Live Trend Visuals")
 
 for i in range(0, len(markets), 2):
     col1, col2 = st.columns(2)
@@ -242,6 +218,26 @@ for i in range(0, len(markets), 2):
             mc1.metric("Live Price", f"{live_p}")
             mc2.metric("Model Target", f"{target_p}")
             mc3.metric("Signal", signal)
+            
+            # --- GENERATE LIVE CORRESPONDING TREND CHART ---
+            np.random.seed(hash(m["name"]) % 10000) # Keep chart shape stable per market
+            minutes = list(range(0, 91, 5))
+            trend_prices = [round(target_p * np.random.uniform(0.85, 1.3), 2) for _ in minutes]
+            trend_prices[-1] = live_p # Anchor end point to current live price
+            
+            chart_data = pd.DataFrame({
+                "Minute": minutes,
+                "Live Price": trend_prices,
+                "Model Target": [target_p] * len(minutes)
+            }).set_index("Minute")
+            
+            # Render line chart with color coordination
+            if "BACK" in signal:
+                st.line_chart(chart_data, color=["#2ecc71", "#95a5a6"], height=160)
+            elif "LAY" in signal:
+                st.line_chart(chart_data, color=["#3498db", "#95a5a6"], height=160)
+            else:
+                st.line_chart(chart_data, color=["#f1c40f", "#95a5a6"], height=160)
             
             if recommended_stake > 0:
                 st.caption(f"💡 **Rec. Stake:** £{recommended_stake:.2f} ({int(kelly_fraction*100)}% Kelly)")
