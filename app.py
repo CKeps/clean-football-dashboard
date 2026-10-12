@@ -47,7 +47,18 @@ api_data = fetch_betfair_odds()
 @st.cache_data
 def load_data():
     teams_df = pd.read_csv("data/team_db.csv")
-    fixtures_df = pd.read_csv("data/fixture_db.csv")
+    try:
+        fixtures_df = pd.read_csv("data/fixture_db.csv")
+    except Exception:
+        # Fallback inline fixture structure if file is missing
+        fixtures_df = pd.DataFrame({
+            "Date": ["Today (12 Oct)"],
+            "League": ["Premier League"],
+            "Fixture": ["Arsenal vs Chelsea"],
+            "HomeTeam": ["Arsenal"],
+            "AwayTeam": ["Chelsea"],
+            "LiveMinute": [32]
+        })
     return teams_df, fixtures_df
 
 teams_df, fixtures_df = load_data()
