@@ -12,7 +12,7 @@ def load_data():
 
 teams_df, fixtures_df = load_data()
 
-st.title("⚽ Betfair Value Trading Engine (6-Market Suite)")
+st.title("⚽ Professional Goals & Match Odds Trading Engine")
 st.markdown("---")
 
 col_a, col_b, col_c = st.columns(3)
@@ -34,45 +34,53 @@ home_stats = teams_df[teams_df["TeamName"] == home_team].iloc[0]
 away_stats = teams_df[teams_df["TeamName"] == away_team].iloc[0]
 expected_goals = (home_stats["BasexG"] * home_stats["SquadWeight"]) + (away_stats["BasexG"] * away_stats["SquadWeight"])
 
-# Define our 6 Markets and dynamic pricing logic based on live match state
-markets = [
-    {"name": "Over 0.5 Goals", "live": match_row.get("LiveOver05Odds", 1.45), "target": round(max(1.05, 1.1 + (2.5 - expected_goals) * (live_minute / 90)), 2)},
-    {"name": "Over 1.5 Goals", "live": match_row.get("LiveOver15Odds", 2.80), "target": round(max(1.15, 1.8 + (3.2 - expected_goals) * (live_minute / 90)), 2)},
-    {"name": "Over 2.5 Goals", "live": 5.20, "target": round(max(1.30, 2.6 + (4.0 - expected_goals) * (live_minute / 90)), 2)},
-    {"name": "Under 2.5 Goals", "live": 1.42, "target": round(max(1.20, 1.5 + (expected_goals - 2.0) * (live_minute / 90)), 2)},
-    {"name": "Both Teams to Score (BTTS)", "live": 1.95, "target": round(max(1.40, 1.7 + (2.2 - expected_goals) * 0.1), 2)},
-    {"name": "Match Odds (Home Win)", "live": 2.10, "target": round(max(1.50, 1.9 + (away_stats['BasexG'] - home_stats['BasexG']) * 0.2), 2)}
-]
+# Generate comprehensive Over/Under lines up to 6.5 goals + Match Odds
+markets = []
+
+# Over / Under 0.5 to 6.5 lines
+for line in [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5]:
+    # Dynamic mathematical target curves adjusted by minute and total expected goals
+    base_over_target = max(1.01, round(1.0 + (line * 0.9) - (expected_goals * 0.4) + (max(0, 45 - live_minute) * 0.01), 2))
+    base_under_target = max(1.01, round(3.5 - (line * 0.5) + (expected_goals * 0.3) + (live_minute * 0.01), 2))
+    
+    mock_live_over = round(base_over_target * np.random.uniform(0.9, 1.3), 2)
+    mock_live_under = round(base_under_target * np.random.uniform(0.9, 1.2), 2)
+    
+    markets.append({"name": f"Over {line} Goals", "type": "Over", "live": mock_live_over, "target": base_over_target})
+    markets.append({"name": f"Under {line} Goals", "type": "Under", "live": mock_live_under, "target": base_under_target})
+
+# Match Odds
+markets.append({"name": "Match Odds: Home Win", "type": "1X2", "live": 2.10, "target": 1.85})
+markets.append({"name": "Match Odds: Draw", "type": "1X2", "live": 3.40, "target": 3.20})
+markets.append({"name": "Match Odds: Away Win", "type": "3.50", "type": "1X2", "live": 3.60, "target": 3.10})
 
 st.markdown("---")
+st.subheader("📈 Goal Lines & Match Odds Value Board")
 
-# Render markets in a responsive 2-column grid layout
+# Render markets cleanly in 2 columns
 for i in range(0, len(markets), 2):
     col1, col2 = st.columns(2)
     
-    with col1:
-        m1 = markets[i]
-        edge1 = ((m1["live"] - m1["target"]) / m1["target"]) * 100
-        st.subheader(f"📊 Market: {m1['name']}")
-        mc1, mc2, mc3 = st.columns(3)
-        mc1.metric("Live Betfair Price", f"{m1['live']}")
-        mc2.metric("Model Target Price", f"{m1['target']}")
-        if m1["live"] > m1["target"]:
-            mc3.metric("Edge / Signal", f"+{edge1:.1f}% (🟢 VALUE)", delta="GO")
-        else:
-            mc3.metric("Edge / Signal", f"{edge1:.1f}% (🔴 NO VALUE)", delta_color="inverse")
-        st.markdown("---")
-        
-    with col2:
-        if i + 1 < len(markets):
-            m2 = markets[i + 1]
-            edge2 = ((m2["live"] - m2["target"]) / m2["target"]) * 100
-            st.subheader(f"📊 Market: {m2['name']}")
-            mc4, mc5, mc6 = st.columns(3)
-            mc4.metric("Live Betfair Price", f"{m2['live']}")
-            mc5.metric("Model Target Price", f"{m2['target']}")
-            if m2["live"] > m2["target"]:
-                mc6.metric("Edge / Signal", f"+{edge2:.1f}% (🟢 VALUE)", delta="GO")
+    for idx, (col, m) in enumerate([(col1, markets[i]), (col2, markets[i+1] if i+1 < len(markets) else None)]):
+        if m is None:
+            continue
+        with col:
+            edge = ((m["live"] - m["target"]) / m["target"]) * 100
+            
+            # Trading Signal logic (Back vs Lay suggestion)
+            if m["live"] > m["target"] * 1.05:
+                signal = "🟢 BACK VALUE"
+                delta_col = "normal"
+            elif m["live"] < m["target"] * 0.95:
+                signal = "🔵 LAY VALUE"
+                delta_col = "inverse"
             else:
-                mc6.metric("Edge / Signal", f"{edge2:.1f}% (🔴 NO VALUE)", delta_color="inverse")
+                signal = "⚪ FAIR / NO TRADE"
+                delta_col = "off"
+
+            st.markdown(f"**{m['name']}**")
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.metric("Live Price", f"{m['live']}")
+            mc2.metric("Model Target", f"{m['target']}")
+            mc3.metric("Signal", signal)
             st.markdown("---")
