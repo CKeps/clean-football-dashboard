@@ -32,6 +32,7 @@ def fetch_betfair_fixtures():
         "Content-Type": "application/json"
     }
     
+    # Expanded filter to capture live and upcoming markets across soccer
     payload = {
         "jsonrpc": "2.0",
         "method": "SportsAPING/v1.0/listMarketCatalogue",
@@ -58,6 +59,7 @@ def fetch_betfair_fixtures():
 
 raw_markets = fetch_betfair_fixtures()
 
+# Comprehensive list of preferred competitions
 PREFERRED_LEAGUES = [
     "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
     "UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League",
@@ -74,10 +76,13 @@ for m in raw_markets:
     start_time = m.get("marketStartTime", "")
     league_name = competition.get("name", "Football / Soccer")
     
+    # If leagues are defined, match them loosely. If empty, take everything.
     if PREFERRED_LEAGUES:
         matched = any(l.lower() in league_name.lower() for l in PREFERRED_LEAGUES)
         if not matched:
             continue
+    else:
+        matched = True
 
     if start_time:
         try:
@@ -121,6 +126,7 @@ if parsed_fixtures:
     api_connected = True
 else:
     api_connected = False
+    # Fallback to help test the UI if API returns empty
     fixtures_df = pd.DataFrame({
         "Date": ["Monday, 12 Oct 2026", "Monday, 12 Oct 2026", "Tuesday, 13 Oct 2026"],
         "League": ["Premier League", "Premier League", "La Liga"],
@@ -134,9 +140,9 @@ else:
 st.title("⚽ Professional Goals & Match Odds Trading Engine")
 
 if api_connected:
-    st.success("🟢 Connected to Betfair Exchange API & Filtered Live Fixtures")
+    st.success(f"🟢 Connected to Betfair Exchange API! Loaded {len(fixtures_df)} live/upcoming fixtures.")
 else:
-    st.info("ℹ️ Running on Robust Match Engine (Live feed connecting via API credentials)")
+    st.warning("⚠️ Betfair API returned 0 matching fixtures for your filter. Showing fallback defaults. (Check if your delayed app key has active markets available).")
 
 st.markdown("---")
 
@@ -219,11 +225,10 @@ for i in range(0, len(markets), 2):
             mc2.metric("Model Target", f"{target_p}")
             mc3.metric("Signal", signal)
             
-            # --- GENERATE LIVE CORRESPONDING TREND CHART ---
-            np.random.seed(hash(m["name"]) % 10000) # Keep chart shape stable per market
+            np.random.seed(hash(m["name"]) % 10000)
             minutes = list(range(0, 91, 5))
             trend_prices = [round(target_p * np.random.uniform(0.85, 1.3), 2) for _ in minutes]
-            trend_prices[-1] = live_p # Anchor end point to current live price
+            trend_prices[-1] = live_p
             
             chart_data = pd.DataFrame({
                 "Minute": minutes,
@@ -231,7 +236,6 @@ for i in range(0, len(markets), 2):
                 "Model Target": [target_p] * len(minutes)
             }).set_index("Minute")
             
-            # Render line chart with color coordination
             if "BACK" in signal:
                 st.line_chart(chart_data, color=["#2ecc71", "#95a5a6"], height=160)
             elif "LAY" in signal:
